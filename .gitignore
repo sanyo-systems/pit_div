@@ -1,0 +1,38 @@
+__pycache__
+python\__pycache__
+*.pyc
+
+.env
+data/
+main.spec
+updater.spec
+select/
+
+venv/
+venv32/
+
+dist/
+build/
+releases/
+
+app.lock
+app.log
+
+# ローカル運用専用の設定・資材
+config/setting.ini
+config/manifest.json
+data/camera_data.json
+data/ro_data.json
+
+# ローカル作業用の補助フォルダ
+焼入焼戻/
+焼準/
+練習/
+
+
+# 用ていないもの
+bar_reder/
+python/setting.ini
+python/current_ui*.png
+調査/
+資料/

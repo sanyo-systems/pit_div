@@ -1,0 +1,8 @@
+opencv-python>=4.10
+PyQt5>=5.15
+PyMuPDF>=1.23
+watchdog>=4.0
+pyodbc>=5.0
+oracledb>=4.0.2
+python-dotenv>=1.2.2
+cryptography>=49.0.0
