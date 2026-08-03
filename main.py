@@ -24,6 +24,8 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
+from app.ini_handler import get as ini_get
+from app.ini_handler import load_ini
 from app.app_metadata import get_setting_path
 from app.app_update import check_for_update, launch_updater, show_update_dialog
 from app.top import AppConfig, MainWindow
@@ -60,6 +62,13 @@ def _setup_logging(app_dir: Path) -> None:
     )
     logging.getLogger(__name__).info("Logging started: %s", log_path)
     logging.getLogger(__name__).info("Recorder logging started: %s", recorder_log_path)
+
+
+def _is_startup_update_skipped(ini_path: Path) -> bool:
+    """Return whether the initial update check is disabled by setting.ini."""
+    ini = load_ini(ini_path)
+    value = ini_get(ini, "setting", "update_skip", "false").casefold()
+    return value in {"1", "true", "yes", "on"}
 
 
 def _install_exception_logging() -> None:
@@ -154,15 +163,18 @@ def main() -> int:
 
         app = QApplication(sys.argv)
         # 更新確認は UI 起動直後に行い、業務画面を開いてから差し替える状況を避ける。
-        update_result = check_for_update(app_dir, ini_path)
-        if update_result is not None:
-            if not update_result.package_path.exists():
-                QMessageBox.warning(None, "更新確認", f"更新パッケージが見つかりません:\n{update_result.package_path}")
-            else:
-                should_update = show_update_dialog(None, update_result)
-                if should_update:
-                    launch_updater(app_dir, update_result, is_frozen=getattr(sys, "frozen", False))
-                    return 0
+        if _is_startup_update_skipped(ini_path):
+            logging.getLogger(__name__).info("STARTUP_UPDATE_CHECK_SKIPPED ini=%s", ini_path)
+        else:
+            update_result = check_for_update(app_dir, ini_path)
+            if update_result is not None:
+                if not update_result.package_path.exists():
+                    QMessageBox.warning(None, "更新確認", f"更新パッケージが見つかりません:\n{update_result.package_path}")
+                else:
+                    should_update = show_update_dialog(None, update_result)
+                    if should_update:
+                        launch_updater(app_dir, update_result, is_frozen=getattr(sys, "frozen", False))
+                        return 0
 
         try:
             # 実運用で設定不備があっても原因が追えるよう、初期化例外はここで明示的に通知する。

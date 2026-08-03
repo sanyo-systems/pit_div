@@ -11,11 +11,48 @@ from __future__ import annotations
 """
 
 import configparser
+import io
 import logging
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _detect_ini_file_format(path: Path, encoding: Optional[str]) -> tuple[str, bytes, str]:
+    """Return the existing text encoding, BOM, and newline for an INI file."""
+    raw_data = path.read_bytes()
+    if b"\r\n" in raw_data:
+        newline = "\r\n"
+    elif b"\n" in raw_data:
+        newline = "\n"
+    elif b"\r" in raw_data:
+        newline = "\r"
+    else:
+        newline = "\n"
+
+    if encoding:
+        normalized_encoding = encoding.lower().replace("_", "-")
+        if normalized_encoding == "utf-8-sig":
+            return "utf-8", b"\xef\xbb\xbf", newline
+        if normalized_encoding == "utf-16":
+            if raw_data.startswith(b"\xfe\xff"):
+                return "utf-16-be", b"\xfe\xff", newline
+            return "utf-16-le", b"\xff\xfe", newline
+        return encoding, b"", newline
+
+    if raw_data.startswith(b"\xef\xbb\xbf"):
+        return "utf-8", b"\xef\xbb\xbf", newline
+    if raw_data.startswith(b"\xff\xfe"):
+        return "utf-16-le", b"\xff\xfe", newline
+    if raw_data.startswith(b"\xfe\xff"):
+        return "utf-16-be", b"\xfe\xff", newline
+
+    try:
+        raw_data.decode("utf-8")
+        return "utf-8", b"", newline
+    except UnicodeDecodeError:
+        return "cp932", b"", newline
 
 
 def _try_read_text(path: Path, encodings: list[str]) -> tuple[str, str]:
@@ -68,20 +105,21 @@ def save_ini(path: Path, config: configparser.ConfigParser, encoding: Optional[s
     """
     # 既存ファイルの文字コードをなるべく維持します（UTF-16 BOMならUTF-16で保存）。
     # Preserve existing encoding when possible (if UTF-16 BOM, save as UTF-16).
-    if encoding is None:
-        try:
-            with path.open("rb") as fb:
-                bom = fb.read(2)
-            if bom in (b"\xff\xfe", b"\xfe\xff"):
-                encoding = "utf-16"
-            else:
-                encoding = "utf-8"
-        except Exception:  # noqa: BLE001
-            encoding = "utf-8"
+    try:
+        file_encoding, bom, newline = _detect_ini_file_format(path, encoding)
+    except OSError:
+        file_encoding, bom, newline = (encoding or "utf-8"), b"", "\n"
 
-    with path.open("w", encoding=encoding, newline="\n") as f:
-        config.write(f)
-    logger.info("INI saved: %s (encoding=%s)", path, encoding)
+    output = io.StringIO()
+    config.write(output)
+    text = output.getvalue()
+    if newline != "\n":
+        text = text.replace("\n", newline)
+
+    with path.open("wb") as file:
+        file.write(bom)
+        file.write(text.encode(file_encoding))
+    logger.info("INI saved: %s (encoding=%s, bom=%s, newline=%r)", path, file_encoding, bool(bom), newline)
 
 
 def get(config: configparser.ConfigParser, section: str, key: str, default: str = "0") -> str:

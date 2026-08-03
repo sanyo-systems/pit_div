@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 _DEFAULT_FILENAME = "shiji.json"
 _SHIJI_VERSION = 1
 HISTORY_MAX_COUNT = 100
+SALT_UP_DONE_RETENTION_HOURS = 12
 _LOADING_GROUP_STATUSES = {"waiting", "processing", "salt_processing", "cancelled"}
 ACCESS_FURNACE_TO_PG = {
     "1": "PG-1",
@@ -278,10 +279,61 @@ def _remove_barashi_done_groups(data: dict[str, Any], now_text: str) -> list[dic
     return removed_groups
 
 
+def _remove_expired_salt_up_done_groups(data: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
+    removed_groups: list[dict[str, Any]] = []
+    furnaces = data.get("furnaces", {})
+    if not isinstance(furnaces, dict):
+        return removed_groups
+
+    retention_limit = now - timedelta(hours=SALT_UP_DONE_RETENTION_HOURS)
+    for furnace_name, furnace_entry in furnaces.items():
+        if not isinstance(furnace_entry, dict):
+            continue
+        groups = furnace_entry.get("groups", [])
+        if not isinstance(groups, list):
+            continue
+        kept_groups: list[dict[str, Any]] = []
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            salt_up_at = _parse_salt_up_time(str(group.get("salt_up_at", "") or ""))
+            if (
+                not bool(group.get("salt_up_done", False))
+                or salt_up_at is None
+                or salt_up_at > retention_limit
+            ):
+                kept_groups.append(group)
+                continue
+            removed_groups.append(
+                {
+                    "furnace": str(furnace_name),
+                    "group_id": str(group.get("group_id", "") or ""),
+                    "group_no": int(group.get("group_no", 0) or 0),
+                    "salt_furnace": group.get("salt_furnace"),
+                    "salt_up_at": group.get("salt_up_at"),
+                    "removed_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
+        if len(kept_groups) != len(groups):
+            furnace_entry["groups"] = kept_groups
+
+    if removed_groups:
+        removed_group_ids = {str(group.get("group_id", "")) for group in removed_groups}
+        if str(data.get("last_group_id", "")) in removed_group_ids:
+            data["last_group_id"] = ""
+        data["updated_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
+        for removed_group in removed_groups:
+            _append_history(data, "salt_up_done_group_removed", removed_group)
+    return removed_groups
+
+
 def _save_shiji_data(data: dict[str, Any]) -> None:
     removed_groups = _remove_barashi_done_groups(data, _now_text())
     if removed_groups:
         logger.info("[shiji] removed barashi done groups count=%s", len(removed_groups))
+    expired_salt_groups = _remove_expired_salt_up_done_groups(data, datetime.now())
+    if expired_salt_groups:
+        logger.info("[shiji] removed expired salt up done groups count=%s", len(expired_salt_groups))
     logger.debug("[shiji] save start path=%s", _shiji_json_path)
     try:
         _shiji_json_path.parent.mkdir(parents=True, exist_ok=True)

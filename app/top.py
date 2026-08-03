@@ -33,7 +33,7 @@ from typing import Any, Optional
 
 import fitz  # PyMuPDF
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtGui import QImage, QKeySequence, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
@@ -50,6 +50,7 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QShortcut,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -769,6 +770,8 @@ class MainWindow(QMainWindow):
 
         self.btn_operator_setting = QPushButton("作業者変更")
         self.btn_operator_setting.clicked.connect(self._on_operator_setting_clicked)
+        self._operator_setting_shortcut = QShortcut(QKeySequence("Shift+S"), self)
+        self._operator_setting_shortcut.activated.connect(self.btn_operator_setting.click)
         self.btn_update_history = QPushButton("更新履歴")
         self.btn_update_history.clicked.connect(self._show_update_history_dialog)
         for button in (self.btn_operator_setting, self.btn_update_history):
@@ -1892,40 +1895,33 @@ class MainWindow(QMainWindow):
         self._maybe_start_countdown()
 
     def _find_pdf_path(self) -> Optional[Path]:
-        # 最後の `0.pdf` は資料未整備時の共通代替表示として使う。
+        # Only the PDF selected by PDF_FILENAME is eligible for display.
         """
         PDF表示優先順位：
-          1) PDF_FOLDER/RoNo/PDF_FILENAME.pdf
-          2) PDF_FOLDER/PDF_FILENAME.pdf
-          3) PDF_FOLDER/0.pdf
-        Priority-based PDF lookup (same as VB).
+        PDF lookup path: PDF_FOLDER/PDF_FILENAME.pdf
+        A missing selected PDF is treated as not found.
         """
         if not self._pdf_folder:
             logger.warning("PDF_SEARCH_SKIPPED pdf_folder_empty=True")
             return None
 
-        candidates: list[Path] = []
-        if self._ro_no and self._pdf_filename and self._pdf_filename != "0":
-            candidates.append(self._pdf_folder / self._ro_no / f"{self._pdf_filename}.pdf")
-        if self._pdf_filename and self._pdf_filename != "0":
-            candidates.append(self._pdf_folder / f"{self._pdf_filename}.pdf")
-        candidates.append(self._pdf_folder / "0.pdf")
-        logger.debug(
-            "PDF_SEARCH_STARTED pdf_folder=%s rono=%s pdf_filename=%s candidates=%s",
-            self._pdf_folder,
-            self._ro_no or "-",
-            self._pdf_filename or "-",
-            " | ".join(str(candidate) for candidate in candidates),
-        )
+        if not self._pdf_filename or self._pdf_filename == "0":
+            logger.warning("PDF_SEARCH_SKIPPED pdf_filename_empty=True")
+            return None
 
-        for c in candidates:
-            if c.exists():
-                logger.debug("PDF_SEARCH_HIT path=%s", c)
-                return c
-        logger.warning(
-            "PDF_SEARCH_MISS pdf_folder=%s rono=%s pdf_filename=%s",
+        pdf_path = self._pdf_folder / f"{self._pdf_filename}.pdf"
+        logger.debug(
+            "PDF_SEARCH_STARTED pdf_folder=%s pdf_filename=%s candidate=%s",
             self._pdf_folder,
-            self._ro_no or "-",
+            self._pdf_filename or "-",
+            pdf_path,
+        )
+        if pdf_path.exists():
+            logger.debug("PDF_SEARCH_HIT path=%s", pdf_path)
+            return pdf_path
+        logger.warning(
+            "PDF_SEARCH_MISS pdf_folder=%s pdf_filename=%s",
+            self._pdf_folder,
             self._pdf_filename or "-",
         )
         return None
